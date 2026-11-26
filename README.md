@@ -234,8 +234,27 @@ The tests use the mock backend and never call the Claude API.
 | `GENERATION_MODEL`        | Model used to generate records                       | `claude-opus-5`  |
 | `GENERATION_EFFORT`       | Effort level: `low`, `medium`, `high`, `xhigh`, `max` | `medium`         |
 | `MAX_CONCURRENCY`         | Parallel generation requests                         | `5`              |
-| `MAX_SAMPLES_PER_JOB`     | Upper limit on samples per job                       | `500`            |
+| `MAX_SAMPLES_PER_JOB`     | Upper limit on samples per job (all conditions)      | `20`             |
 | `MAX_ATTEMPTS_PER_SAMPLE` | Attempts per sample before it is reported as failed  | `3`              |
+| `APP_PASSWORD`            | If set, the app requires this password (HTTP Basic auth; any username). `/api/health` stays open. | — |
+| `STATIC_DIR`              | Built frontend served at `/`                         | `frontend/dist`  |
+
+---
+
+## Deploy to Render
+
+`render.yaml` defines one web service. It builds the frontend, installs the backend, and serves both from FastAPI.
+
+1. In the Render dashboard, choose **New → Blueprint** and connect this GitHub repository.
+2. Enter the two secrets when prompted:
+   - `ANTHROPIC_API_KEY`: the key used for generation.
+   - `APP_PASSWORD`: protects the app. Set this, because without it anyone with the URL can spend your API credits.
+3. Click **Apply**. When the deploy is done, open the `onrender.com` URL and sign in with any username and the password.
+
+Notes:
+- The free plan sleeps after 15 minutes without traffic, so the first request afterwards takes about a minute.
+- Jobs are kept in memory, so they are lost when the service restarts or sleeps. Download results when a job finishes.
+- Pushes to `main` redeploy automatically.
 
 ---
 

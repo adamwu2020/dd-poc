@@ -173,12 +173,17 @@ def test_generate_stream_and_export(client):
     assert csv_answers.text.splitlines()[0].startswith("id,target_condition,label")
 
 
-def test_generate_rejects_oversized_job(client):
-    r = client.post(
-        "/api/generate",
-        json={"department": "Cardiology", "conditions": ["A", "B"], "positive_count": 300, "negative_count": 0},
-    )
+def test_generate_enforces_sample_limit(client):
+    def post(positive, negative):
+        return client.post(
+            "/api/generate",
+            json={"department": "Cardiology", "conditions": ["A", "B"], "positive_count": positive, "negative_count": negative},
+        )
+
+    assert post(5, 5).status_code == 202  # 2 conditions x 10 = 20, at the limit
+    r = post(6, 5)  # 22 samples
     assert r.status_code == 422
+    assert "limit is 20" in r.json()["detail"]
 
 
 def test_fatal_api_error_fails_job(client):
@@ -228,3 +233,15 @@ def test_export_csv_flattens_nested_fields():
     header = export_samples([sample], "csv", "full").splitlines()[0]
     assert "record.physical_exam.vitals.heart_rate" in header
     assert "record.test_results" in header
+
+
+def test_app_password_protects_everything_but_health(client, monkeypatch):
+    from app import config
+
+    monkeypatch.setattr(config, "settings", config.Settings(app_password="s3cret"))
+    assert client.get("/api/health").status_code == 200
+    r = client.get("/api/departments")
+    assert r.status_code == 401
+    assert r.headers["www-authenticate"].startswith("Basic")
+    assert client.get("/api/departments", auth=("anyone", "wrong")).status_code == 401
+    assert client.get("/api/departments", auth=("anyone", "s3cret")).status_code == 200

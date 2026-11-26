@@ -103,7 +103,7 @@ export default function ConditionStep({
           <input
             type="number"
             min={0}
-            max={500}
+            max={maxSamples}
             value={positive}
             disabled={disabled}
             onChange={(e) => setPositive(Math.max(0, Number(e.target.value)))}
@@ -114,7 +114,7 @@ export default function ConditionStep({
           <input
             type="number"
             min={0}
-            max={500}
+            max={maxSamples}
             value={negative}
             disabled={disabled}
             onChange={(e) => setNegative(Math.max(0, Number(e.target.value)))}

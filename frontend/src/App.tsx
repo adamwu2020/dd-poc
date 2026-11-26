@@ -95,7 +95,7 @@ export default function App() {
           key={`${conditionList.department}|${conditionList.conditions.join("|")}`}
           {...conditionList}
           disabled={running}
-          maxSamples={health?.max_samples_per_job ?? 500}
+          maxSamples={health?.max_samples_per_job ?? 20}
           onGenerate={generate}
         />
       )}
