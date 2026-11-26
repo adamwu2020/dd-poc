@@ -229,7 +229,7 @@ export default function ConditionStep({
             })
           }
         >
-          Generate
+          Continue
         </button>
       </div>
     </section>

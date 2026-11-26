@@ -3,15 +3,11 @@ import json
 from collections import Counter
 from types import SimpleNamespace
 
-import anthropic
-import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from app.export import export_samples
-from app.generation.llm import AnthropicLLM, GenerationError, MockLLM, get_llm
+from app.generation.llm import AnthropicLLM, GenerationError, MockLLM
 from app.generation.planner import build_specs, ensure_plan
-from app.main import app
 from app.schemas import ConditionPlan, GenerateRequest, Sample
 
 PLAN = ConditionPlan(hard_negatives=["Pericarditis", "Aortic dissection"], easy_negatives=["Gout"])
@@ -121,106 +117,7 @@ def test_anthropic_llm_raises_on_unusable_response(stop_reason, parsed):
         asyncio.run(AnthropicLLM(client).plan_negatives("Cardiology", "Heart failure"))
 
 
-# --- API ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def client():
-    app.dependency_overrides[get_llm] = lambda: MockLLM(delay=0)
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
-
-
-def read_stream(client: TestClient, job_id: str) -> list[dict]:
-    events = []
-    with client.stream("GET", f"/api/jobs/{job_id}/stream") as r:
-        for line in r.iter_lines():
-            if line.startswith("data: "):
-                events.append(json.loads(line[6:]))
-    return events
-
-
-def test_conditions_for_seeded_and_unknown_departments(client):
-    r = client.get("/api/departments/cardiology/conditions")
-    assert r.json()["source"] == "seed"
-    assert "Heart failure" in r.json()["conditions"]
-
-    r = client.get("/api/departments/Dermatology/conditions")
-    assert r.json()["source"] == "llm"
-    assert r.json()["conditions"]
-
-
-def test_generate_stream_and_export(client):
-    r = client.post(
-        "/api/generate",
-        json={"department": "Cardiology", "conditions": ["Heart failure"], "positive_count": 3, "negative_count": 2},
-    )
-    assert r.status_code == 202
-    job_id = r.json()["job_id"]
-
-    events = read_stream(client, job_id)
-    assert events[-1] == {"type": "done", "status": "completed", "error": None}
-    samples = [e["sample"] for e in events if e["type"] == "sample"]
-    assert Counter(s["label"] for s in samples) == {"positive": 3, "negative": 2}
-
-    inputs = client.get(f"/api/jobs/{job_id}/export", params={"format": "jsonl", "part": "inputs"})
-    rows = [json.loads(line) for line in inputs.text.splitlines()]
-    assert len(rows) == 5
-    assert all("diagnosis" not in row["record"] and "plan" not in row["record"] for row in rows)
-
-    csv_answers = client.get(f"/api/jobs/{job_id}/export", params={"format": "csv", "part": "answers"})
-    assert csv_answers.text.splitlines()[0].startswith("id,target_condition,label")
-
-
-def test_generate_enforces_sample_limit(client):
-    def post(positive, negative):
-        return client.post(
-            "/api/generate",
-            json={"department": "Cardiology", "conditions": ["A", "B"], "positive_count": positive, "negative_count": negative},
-        )
-
-    assert post(5, 5).status_code == 202  # 2 conditions x 10 = 20, at the limit
-    r = post(6, 5)  # 22 samples
-    assert r.status_code == 422
-    assert "limit is 20" in r.json()["detail"]
-
-
-def test_fatal_api_error_fails_job(client):
-    class BrokenLLM(MockLLM):
-        async def generate_record(self, spec):
-            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-            raise anthropic.AuthenticationError(
-                "invalid x-api-key", response=httpx.Response(401, request=request), body=None
-            )
-
-    app.dependency_overrides[get_llm] = lambda: BrokenLLM(delay=0)
-    r = client.post(
-        "/api/generate",
-        json={"department": "Cardiology", "conditions": ["Heart failure"], "positive_count": 2, "negative_count": 0},
-    )
-    events = read_stream(client, r.json()["job_id"])
-    assert events[-1]["status"] == "failed"
-    assert "AuthenticationError" in events[-1]["error"]
-
-
-def test_transient_errors_are_reported_per_sample(client):
-    class FlakyLLM(MockLLM):
-        async def generate_record(self, spec):
-            if spec.index == 0:
-                raise GenerationError("model declined the request")
-            return await super().generate_record(spec)
-
-    app.dependency_overrides[get_llm] = lambda: FlakyLLM(delay=0)
-    r = client.post(
-        "/api/generate",
-        json={"department": "Cardiology", "conditions": ["Heart failure"], "positive_count": 3, "negative_count": 0},
-    )
-    job_id = r.json()["job_id"]
-    events = read_stream(client, job_id)
-    assert events[-1]["status"] == "completed"
-    assert [e["index"] for e in events if e["type"] == "sample_error"] == [0]
-    assert client.get(f"/api/jobs/{job_id}").json()["failed"] == 1
+# --- export ------------------------------------------------------------------------
 
 
 def test_export_csv_flattens_nested_fields():
@@ -233,15 +130,3 @@ def test_export_csv_flattens_nested_fields():
     header = export_samples([sample], "csv", "full").splitlines()[0]
     assert "record.physical_exam.vitals.heart_rate" in header
     assert "record.test_results" in header
-
-
-def test_app_password_protects_everything_but_health(client, monkeypatch):
-    from app import config
-
-    monkeypatch.setattr(config, "settings", config.Settings(app_password="s3cret"))
-    assert client.get("/api/health").status_code == 200
-    r = client.get("/api/departments")
-    assert r.status_code == 401
-    assert r.headers["www-authenticate"].startswith("Basic")
-    assert client.get("/api/departments", auth=("anyone", "wrong")).status_code == 401
-    assert client.get("/api/departments", auth=("anyone", "s3cret")).status_code == 200

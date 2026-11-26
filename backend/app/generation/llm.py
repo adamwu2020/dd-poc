@@ -7,7 +7,7 @@ from typing import Protocol, TypeVar
 import anthropic
 from pydantic import BaseModel
 
-from app.config import settings
+from app import config
 from app.data.departments import DEPARTMENT_CONDITIONS, find_department
 from app.generation import prompts
 from app.schemas import (
@@ -41,12 +41,12 @@ class AnthropicLLM:
 
     async def _parse(self, system: str, user: str, output_format: type[T]) -> T:
         response = await self._client.beta.messages.parse(
-            model=settings.generation_model,
+            model=config.settings.generation_model,
             max_tokens=16000,
             system=system,
             messages=[{"role": "user", "content": user}],
             output_format=output_format,
-            output_config={"effort": settings.generation_effort},
+            output_config={"effort": config.settings.generation_effort},
             # If the model declines, retry server-side on Anthropic's recommended fallback.
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
@@ -145,6 +145,6 @@ class MockLLM:
 
 
 def get_llm() -> LLMClient:
-    if settings.generation_mode == "mock":
+    if config.settings.generation_mode == "mock":
         return MockLLM()
     return AnthropicLLM()

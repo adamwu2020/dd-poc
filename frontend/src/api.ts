@@ -1,7 +1,30 @@
-import type { GenerateRequest, JobEvent, JobStatus } from "./types";
+import type {
+  Account,
+  GenerateRequest,
+  JobEvent,
+  JobStatus,
+  JobSummary,
+  OrderView,
+  Quote,
+} from "./types";
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** Called whenever the server says the session is gone, so the app can show the sign-in page. */
+let onUnauthorized: () => void = () => {};
+export function setUnauthorizedHandler(handler: () => void) {
+  onUnauthorized = handler;
+}
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(url, { credentials: "same-origin", ...init });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -9,17 +32,36 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       detail =
         typeof body.detail === "string"
           ? body.detail
-          : (body.detail ?? []).map((d: { msg: string }) => d.msg).join("; ") || detail;
+          : (body.detail ?? []).map((d: { msg: string }) => d.msg.replace(/^Value error, /, "")).join("; ") ||
+            detail;
     } catch {
       // keep statusText
     }
-    throw new Error(detail);
+    if (res.status === 401 && !url.startsWith("/api/auth/")) onUnauthorized();
+    throw new ApiError(detail, res.status);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
+const post = <T>(url: string, body?: unknown) =>
+  request<T>(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
 export const api = {
-  health: () => request<{ status: string; mode: string; model: string; max_samples_per_job: number }>("/api/health"),
+  health: () =>
+    request<{ status: string; mode: string; model: string; max_samples_per_job: number; payment_mode: string }>(
+      "/api/health",
+    ),
+
+  me: () => request<Account>("/api/auth/me"),
+  account: () => request<Account>("/api/account"),
+  register: (email: string, password: string) => post<Account>("/api/auth/register", { email, password }),
+  login: (email: string, password: string) => post<Account>("/api/auth/login", { email, password }),
+  logout: () => post<void>("/api/auth/logout"),
 
   departments: () => request<string[]>("/api/departments"),
 
@@ -28,13 +70,13 @@ export const api = {
       `/api/departments/${encodeURIComponent(department)}/conditions`,
     ),
 
-  generate: (body: GenerateRequest) =>
-    request<JobStatus>("/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
+  quote: (body: GenerateRequest) => post<Quote>("/api/orders/quote", body),
+  createOrder: (body: GenerateRequest) => post<OrderView>("/api/orders", body),
+  order: (orderId: string) => request<OrderView>(`/api/orders/${orderId}`),
+  cancelOrder: (orderId: string) => post<OrderView>(`/api/orders/${orderId}/cancel`),
+  mockPay: (orderId: string) => post<OrderView>(`/api/orders/${orderId}/mock-pay`),
 
+  jobs: () => request<JobSummary[]>("/api/jobs"),
   cancel: (jobId: string) => request<JobStatus>(`/api/jobs/${jobId}`, { method: "DELETE" }),
 
   exportUrl: (jobId: string, format: string, part: string) =>
@@ -54,3 +96,7 @@ export const api = {
     return () => source.close();
   },
 };
+
+export function formatUsd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}

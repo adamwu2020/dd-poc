@@ -79,3 +79,42 @@ export type JobEvent =
   | { type: "sample"; index: number; sample: Sample }
   | { type: "sample_error"; index: number; error: string }
   | { type: "done"; status: JobState; error: string | null };
+
+export interface Account {
+  email: string;
+  free_positive_left: number;
+  free_negative_left: number;
+  sample_credits: number;
+  price_per_sample_cents: number;
+}
+
+export interface Quote {
+  total_samples: number;
+  positive_samples: number;
+  negative_samples: number;
+  free_positive: number;
+  free_negative: number;
+  credits_used: number;
+  paid_samples: number;
+  price_per_sample_cents: number;
+  amount_cents: number;
+}
+
+export interface OrderView {
+  order_id: string;
+  status: "pending" | "fulfilled" | "expired";
+  quote: Quote;
+  checkout_url: string | null;
+  job_id: string | null;
+}
+
+export interface JobSummary {
+  job_id: string;
+  status: JobState;
+  department: string;
+  conditions: string[];
+  total: number;
+  completed: number;
+  failed: number;
+  created_at: string;
+}

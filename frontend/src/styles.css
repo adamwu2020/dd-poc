@@ -450,3 +450,148 @@ footer {
     flex-wrap: wrap;
   }
 }
+
+/* --- accounts and billing --------------------------------------------------- */
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.page-header p {
+  margin: 0;
+}
+
+.account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+.account-email {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.small-button {
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.auth-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+}
+
+.auth-card h2 {
+  margin-bottom: 4px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 16px 0;
+}
+
+.notice {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 0;
+}
+
+.notice.error {
+  background: var(--negative-soft);
+  border-color: var(--danger);
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0 0 16px;
+}
+
+.summary dt {
+  color: var(--muted);
+}
+
+.summary dd {
+  margin: 0;
+}
+
+.invoice {
+  max-width: 520px;
+}
+
+.invoice .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice tfoot th {
+  font-size: 1rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  border-bottom: none;
+}
+
+.mock-checkout {
+  max-width: 420px;
+  margin: 24px auto;
+  text-align: center;
+}
+
+.mock-checkout .total {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 8px 0;
+}
+
+.badge.status-completed {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.badge.status-failed,
+.badge.status-cancelled {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.badge.status-running,
+.badge.status-planning {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+@media (max-width: 600px) {
+  .account {
+    align-items: flex-start;
+    text-align: left;
+  }
+}

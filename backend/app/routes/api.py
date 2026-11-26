@@ -3,31 +3,52 @@ import json
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app import config
+from app.auth import current_user
 from app.data.departments import DEPARTMENT_CONDITIONS, find_department
+from app.db import JobRecord, User, get_session
 from app.export import MEDIA_TYPES, ExportFormat, ExportPart, export_samples
 from app.generation.llm import GenerationError, LLMClient, get_llm
-from app.jobs import Job, jobs
-from app.schemas import GenerateRequest, JobStatus
+from app.jobs import jobs, load_samples, replay_events
+from app.schemas import JobStatus
 
 router = APIRouter(prefix="/api")
 
 
-def _get_job(job_id: str) -> Job:
-    job = jobs.get(job_id)
-    if job is None:
+async def _own_job(job_id: str, user: User, db: AsyncSession) -> JobRecord:
+    record = await db.get(JobRecord, job_id)
+    if record is None or record.user_id != user.id:
         raise HTTPException(status_code=404, detail="job not found")
-    return job
+    return record
+
+
+def _status(record: JobRecord) -> JobStatus:
+    live = jobs.get(record.id)
+    if live:
+        return live.status_model()
+    return JobStatus(
+        job_id=record.id,
+        status=record.status,  # type: ignore[arg-type]
+        total=record.total,
+        completed=record.completed,
+        failed=record.failed,
+        error=record.error,
+    )
 
 
 @router.get("/health")
 async def health() -> dict:
+    s = config.settings
     return {
         "status": "ok",
-        "mode": settings.generation_mode,
-        "model": settings.generation_model,
-        "max_samples_per_job": settings.max_samples_per_job,
+        "mode": s.generation_mode,
+        "model": s.generation_model,
+        "max_samples_per_job": s.max_samples_per_job,
+        "payment_mode": s.payment_mode,
     }
 
 
@@ -37,7 +58,9 @@ async def list_departments() -> list[str]:
 
 
 @router.get("/departments/{department}/conditions")
-async def list_conditions(department: str, llm: LLMClient = Depends(get_llm)) -> dict:
+async def list_conditions(
+    department: str, llm: LLMClient = Depends(get_llm), _: User = Depends(current_user)
+) -> dict:
     seeded = find_department(department)
     if seeded:
         return {"department": seeded, "source": "seed", "conditions": DEPARTMENT_CONDITIONS[seeded]}
@@ -48,40 +71,71 @@ async def list_conditions(department: str, llm: LLMClient = Depends(get_llm)) ->
     return {"department": department.strip(), "source": "llm", "conditions": conditions}
 
 
-@router.post("/generate", status_code=202)
-async def generate(request: GenerateRequest, llm: LLMClient = Depends(get_llm)) -> JobStatus:
-    if request.total_samples > settings.max_samples_per_job:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"this request would generate {request.total_samples} samples; "
-                f"the limit is {settings.max_samples_per_job} per job"
-            ),
+class JobSummary(BaseModel):
+    job_id: str
+    status: str
+    department: str
+    conditions: list[str]
+    total: int
+    completed: int
+    failed: int
+    created_at: str
+
+
+@router.get("/jobs")
+async def list_jobs(
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_session)
+) -> list[JobSummary]:
+    rows = await db.execute(
+        select(JobRecord).where(JobRecord.user_id == user.id).order_by(JobRecord.created_at.desc()).limit(50)
+    )
+    summaries = []
+    for r in rows.scalars():
+        s = _status(r)
+        summaries.append(
+            JobSummary(
+                job_id=r.id,
+                status=s.status,
+                department=r.request["department"],
+                conditions=r.request["conditions"],
+                total=s.total,
+                completed=s.completed,
+                failed=s.failed,
+                created_at=r.created_at.isoformat() + "Z",
+            )
         )
-    job = jobs.start(request, llm)
-    return job.status_model()
+    return summaries
 
 
 @router.get("/jobs/{job_id}")
-async def job_status(job_id: str) -> JobStatus:
-    return _get_job(job_id).status_model()
+async def job_status(
+    job_id: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_session)
+) -> JobStatus:
+    return _status(await _own_job(job_id, user, db))
 
 
 @router.delete("/jobs/{job_id}")
-async def cancel_job(job_id: str) -> JobStatus:
-    job = _get_job(job_id)
-    if job.task and not job.finished:
+async def cancel_job(
+    job_id: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_session)
+) -> JobStatus:
+    record = await _own_job(job_id, user, db)
+    job = jobs.get(job_id)
+    if job and job.task and not job.finished:
         job.task.cancel()
-    return job.status_model()
+    return _status(record)
 
 
 @router.get("/jobs/{job_id}/stream")
-async def stream_job(job_id: str) -> StreamingResponse:
+async def stream_job(
+    job_id: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_session)
+) -> StreamingResponse:
     """Server-Sent Events: replays every event so far, then streams new ones."""
-    job = _get_job(job_id)
+    await _own_job(job_id, user, db)
+    job = jobs.get(job_id)
 
     async def event_source():
-        async for event in job.events_from(0):
+        events = job.events_from(0) if job else _iterate(await replay_events(job_id))
+        async for event in events:
             yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -91,9 +145,17 @@ async def stream_job(job_id: str) -> StreamingResponse:
     )
 
 
+async def _iterate(items):
+    for item in items:
+        yield item
+
+
 @router.get("/jobs/{job_id}/samples")
-async def job_samples(job_id: str) -> list[dict]:
-    return [s.model_dump() for s in _get_job(job_id).ordered_samples()]
+async def job_samples(
+    job_id: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_session)
+) -> list[dict]:
+    await _own_job(job_id, user, db)
+    return [s.model_dump() for s in await load_samples(job_id)]
 
 
 @router.get("/jobs/{job_id}/export")
@@ -101,10 +163,12 @@ async def export_job(
     job_id: str,
     format: ExportFormat = Query("jsonl"),
     part: ExportPart = Query("full"),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_session),
 ) -> Response:
-    job = _get_job(job_id)
-    body = export_samples(job.ordered_samples(), format, part)
-    filename = f"patients-{job.id}-{part}.{format}"
+    await _own_job(job_id, user, db)
+    body = export_samples(await load_samples(job_id), format, part)
+    filename = f"patients-{job_id}-{part}.{format}"
     return Response(
         content=body,
         media_type=MEDIA_TYPES[format],

@@ -33,9 +33,7 @@ export default function ResultsView({ status, samples, errors, onCancel, onReset
 
   return (
     <section className="card">
-      <h2>
-        <span className="step">3</span> Results
-      </h2>
+      <h2>Results</h2>
 
       <div className="progress-head">
         <strong>{STATUS_TEXT[status.status]}</strong>
@@ -69,7 +67,7 @@ export default function ResultsView({ status, samples, errors, onCancel, onReset
             </button>
           ) : (
             <button type="button" className="secondary" onClick={onReset}>
-              New dataset
+              Close
             </button>
           )}
         </div>
