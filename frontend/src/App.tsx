@@ -208,15 +208,7 @@ export default function App() {
       <header className="page-header">
         <div>
           <h1>Synthetic Patient Data Generator</h1>
-          <p className="muted">
-            Build labeled, fully synthetic patient records for evaluating LLMs.
-            {health && (
-              <>
-                {" "}
-                Model: <code>{health.mode === "mock" ? "mock (no API calls)" : health.model}</code>
-              </>
-            )}
-          </p>
+          <p className="muted">Build labeled, fully synthetic patient records for evaluating LLMs.</p>
         </div>
         {account && (
           <div className="account">
